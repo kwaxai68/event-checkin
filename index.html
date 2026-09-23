@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>現場報到掃描</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  body { font-family: -apple-system, "PingFang TC", Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 16px; background:#f7f7f8; }
+  h2 { text-align:center; }
+  label { display:block; margin:16px 0 6px; font-size:14px; color:#333; }
+  input { width:100%; padding:10px 12px; border:1px solid #ddd; border-radius:8px; font-size:15px; box-sizing:border-box; }
+  button { width:100%; margin-top:16px; padding:12px; border:none; border-radius:8px; background:#2563eb; color:#fff; font-size:16px; cursor:pointer; }
+  button.secondary { background:#e5e7eb; color:#333; }
+  .mode-tabs { display:flex; gap:8px; margin-bottom:12px; }
+  .tab { flex:1; padding:10px; border:1px solid #ddd; background:#fff; border-radius:8px; font-size:13px; cursor:pointer; }
+  .tab.active { background:#2563eb; color:#fff; border-color:#2563eb; }
+  #reader { width: 100%; border-radius: 12px; overflow:hidden; }
+  .hint { font-size:12px; color:#888; margin-top:8px; line-height:1.5; }
+  #fileInput { width:100%; padding:14px; border:2px dashed #bbb; border-radius:10px; background:#fff; box-sizing:border-box; }
+  #result { margin-top: 16px; padding: 16px; border-radius: 10px; text-align:center; font-size: 18px; font-weight:600; display:none; }
+  .success { background:#d6f5df; color:#146c2e; }
+  .duplicate { background:#fff3cd; color:#8a6300; }
+  .error { background:#fde2e1; color:#a3231d; }
+  #log { margin-top:12px; font-size:13px; color:#666; max-height:160px; overflow-y:auto; }
+  #log div { padding:4px 0; border-bottom:1px solid #eee; }
+  #settingsMsg { margin-top:12px; font-size:14px; padding:10px; border-radius:8px; display:none; }
+  .ok { background:#d6f5df; color:#146c2e; }
+  .err { background:#fde2e1; color:#a3231d; }
+</style>
+</head>
+<body>
+  <h2>現場報到掃描</h2>
+
+  <div id="settingsCard">
+    <p class="hint">首次使用請先登入，登入狀態會記在這台裝置上（清除瀏覽器資料或按登出才需要重新輸入）。</p>
+    <label>Apps Script 網頁應用程式網址</label>
+    <input type="text" id="apiInput" placeholder="https://script.google.com/macros/s/xxxx/exec">
+    <label>帳號</label>
+    <input type="text" id="usernameInput">
+    <label>密碼</label>
+    <input type="password" id="passwordInput">
+    <button onclick="doStaffLogin()" id="loginBtn">登入</button>
+    <div id="settingsMsg"></div>
+  </div>
+
+  <div id="mainUI" style="display:none;">
+    <div class="mode-tabs">
+      <button id="tabCamera" class="tab active" onclick="switchMode('camera')">即時相機掃描</button>
+      <button id="tabPhoto" class="tab" onclick="switchMode('photo')">拍照掃描</button>
+    </div>
+    <div id="cameraMode"><div id="reader"></div></div>
+    <div id="photoMode" style="display:none;">
+      <input type="file" id="fileInput" accept="image/*" capture="environment">
+      <p class="hint">點擊後會開啟手機相機拍照，拍下 QR Code 後自動判讀報到。</p>
+    </div>
+    <div id="result"></div>
+    <div id="log"></div>
+    <button class="secondary" onclick="logoutStaff()">登出</button>
+  </div>
+
+  <script>
+    var API_URL = '';
+    var TOKEN = '';
+    var lastId = null;
+    var lastTime = 0;
+    var cameraStarted = false;
+    var html5QrCode = new Html5Qrcode("reader");
+
+    function showSettingsMsg(cls, text) {
+      var el = document.getElementById('settingsMsg');
+      el.style.display = 'block';
+      el.className = cls;
+      el.textContent = text;
+    }
+
+    function loadSettings() {
+      var params = new URLSearchParams(location.search);
+      var qApi = params.get('api');
+      var qToken = params.get('token');
+
+      API_URL = qApi || localStorage.getItem('checkin_api') || '';
+      TOKEN = qToken || localStorage.getItem('checkin_token') || '';
+
+      if (qApi) localStorage.setItem('checkin_api', qApi);
+      if (qToken) localStorage.setItem('checkin_token', qToken);
+
+      document.getElementById('apiInput').value = API_URL;
+
+      if (API_URL && TOKEN) {
+        enterMainUI();
+      } else {
+        showLoginForm();
+      }
+    }
+
+    function showLoginForm() {
+      document.getElementById('mainUI').style.display = 'none';
+      document.getElementById('settingsCard').style.display = 'block';
+      stopCamera();
+    }
+
+    function enterMainUI() {
+      document.getElementById('settingsCard').style.display = 'none';
+      document.getElementById('mainUI').style.display = 'block';
+      startCamera();
+    }
+
+    function doStaffLogin() {
+      var api = document.getElementById('apiInput').value.trim();
+      var username = document.getElementById('usernameInput').value.trim();
+      var password = document.getElementById('passwordInput').value.trim();
+      if (!api || !username || !password) { showSettingsMsg('err', '請完整輸入網址、帳號與密碼。'); return; }
+
+      API_URL = api;
+      localStorage.setItem('checkin_api', API_URL);
+
+      var btn = document.getElementById('loginBtn');
+      btn.disabled = true;
+      btn.textContent = '登入中...';
+
+      jsonpLogin(username, password, function (err, res) {
+        btn.disabled = false;
+        btn.textContent = '登入';
+        if (err) { showSettingsMsg('err', '連線失敗，請確認網址是否正確。'); return; }
+        if (!res.success) { showSettingsMsg('err', res.message); return; }
+        TOKEN = res.token;
+        localStorage.setItem('checkin_token', TOKEN);
+        enterMainUI();
+      });
+    }
+
+    function logoutStaff() {
+      localStorage.removeItem('checkin_token');
+      TOKEN = '';
+      stopCamera();
+      showLoginForm();
+    }
+
+    function jsonpLogin(username, password, onDone) {
+      var callbackName = 'jsonp_login_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
+      var script = document.createElement('script');
+      window[callbackName] = function (res) {
+        delete window[callbackName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+        onDone(null, res);
+      };
+      script.src = API_URL + '?action=login&username=' + encodeURIComponent(username) +
+        '&password=' + encodeURIComponent(password) + '&callback=' + callbackName;
+      script.onerror = function () {
+        delete window[callbackName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+        onDone(new Error('連線失敗'));
+      };
+      document.body.appendChild(script);
+    }
+
+    function jsonpCheckin(id, onDone) {
+      var callbackName = 'jsonp_cb_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
+      var script = document.createElement('script');
+      window[callbackName] = function (res) {
+        delete window[callbackName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+        onDone(null, res);
+      };
+      script.src = API_URL + '?action=checkin&id=' + encodeURIComponent(id) +
+        '&token=' + encodeURIComponent(TOKEN) + '&callback=' + callbackName;
+      script.onerror = function () {
+        delete window[callbackName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+        onDone(new Error('連線失敗'));
+      };
+      document.body.appendChild(script);
+    }
+
+    function showResult(cls, text) {
+      var r = document.getElementById('result');
+      r.className = cls;
+      r.textContent = text;
+      r.style.display = 'block';
+    }
+
+    function addLog(text) {
+      var log = document.getElementById('log');
+      var line = document.createElement('div');
+      line.textContent = new Date().toLocaleTimeString() + ' — ' + text;
+      log.insertBefore(line, log.firstChild);
+    }
+
+    function handleDecoded(decodedText) {
+      var now = Date.now();
+      if (decodedText === lastId && now - lastTime < 4000) return;
+      lastId = decodedText;
+      lastTime = now;
+
+      jsonpCheckin(decodedText, function (err, res) {
+        if (err) { showResult('error', '連線失敗，請確認網路連線。'); addLog('連線失敗'); return; }
+        if (res.status === 'error' && res.message && res.message.indexOf('重新登入') > -1) {
+          logoutStaff();
+          return;
+        }
+        if (res.status === 'success') showResult('success', '✅ ' + res.message);
+        else if (res.status === 'duplicate') showResult('duplicate', '⚠️ ' + res.message);
+        else showResult('error', '❌ ' + res.message);
+        addLog(res.message);
+      });
+    }
+
+    function startCamera() {
+      if (cameraStarted) return;
+      Html5Qrcode.getCameras().then(function (devices) {
+        if (!devices || !devices.length) { showResult('error', '找不到可用的相機，請改用「拍照掃描」。'); return; }
+        var cameraId = devices.length > 1 ? devices[devices.length - 1].id : devices[0].id;
+        html5QrCode.start(cameraId, { fps: 10, qrbox: 250 }, handleDecoded)
+          .then(function () { cameraStarted = true; })
+          .catch(function () { showResult('error', '無法啟用相機，請改用「拍照掃描」。'); });
+      }).catch(function () { showResult('error', '無法取得相機清單，請改用「拍照掃描」。'); });
+    }
+
+    function stopCamera() {
+      if (cameraStarted) { html5QrCode.stop().then(function () { cameraStarted = false; }).catch(function () {}); }
+    }
+
+    function switchMode(mode) {
+      document.getElementById('tabCamera').className = 'tab' + (mode === 'camera' ? ' active' : '');
+      document.getElementById('tabPhoto').className = 'tab' + (mode === 'photo' ? ' active' : '');
+      document.getElementById('cameraMode').style.display = mode === 'camera' ? 'block' : 'none';
+      document.getElementById('photoMode').style.display = mode === 'photo' ? 'block' : 'none';
+      document.getElementById('result').style.display = 'none';
+      if (mode === 'camera') { startCamera(); } else { stopCamera(); }
+    }
+
+    document.getElementById('fileInput').addEventListener('change', function (e) {
+      var file = e.target.files[0];
+      if (!file) return;
+      html5QrCode.scanFile(file, false)
+        .then(function (decodedText) { handleDecoded(decodedText); })
+        .catch(function () { showResult('error', '無法從照片中讀取 QR Code，請重新拍攝。'); });
+      e.target.value = '';
+    });
+
+    loadSettings();
+  </script>
+</body>
+</html>
