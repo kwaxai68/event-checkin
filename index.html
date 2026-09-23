@@ -211,7 +211,7 @@
       Html5Qrcode.getCameras().then(function (devices) {
         if (!devices || !devices.length) { showResult('error', '找不到可用的相機，請改用「拍照掃描」。'); return; }
         var cameraId = devices.length > 1 ? devices[devices.length - 1].id : devices[0].id;
-        html5QrCode.start(cameraId, { fps: 10, qrbox: 250 }, handleDecoded)
+        html5QrCode.start(cameraId, { fps: 10, qrbox: 250, videoConstraints: { facingMode: { ideal: 'environment' }, advanced: [{ zoom: 1 }] } }, handleDecoded)
           .then(function () { cameraStarted = true; })
           .catch(function () { showResult('error', '無法啟用相機，請改用「拍照掃描」。'); });
       }).catch(function () { showResult('error', '無法取得相機清單，請改用「拍照掃描」。'); });
