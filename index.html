@@ -56,7 +56,10 @@
     </div>
     <div id="result"></div>
     <div id="log"></div>
-    <button class="secondary" onclick="logoutStaff()">登出</button>
+    <div style="display:flex;gap:8px;margin-top:16px;">
+      <a id="backLink" href="#" target="_blank" style="flex:1;text-align:center;padding:10px;font-size:13px;color:#666;text-decoration:none;border:1px solid #ddd;border-radius:8px;">← 返回報名頁</a>
+      <button class="secondary" onclick="logoutStaff()" style="flex:1;margin-top:0;">登出</button>
+    </div>
   </div>
 
   <script>
@@ -103,6 +106,7 @@
     function enterMainUI() {
       document.getElementById('settingsCard').style.display = 'none';
       document.getElementById('mainUI').style.display = 'block';
+      document.getElementById('backLink').href = API_URL;
       startCamera();
     }
 
