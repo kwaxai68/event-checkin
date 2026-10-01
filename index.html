@@ -27,13 +27,15 @@
   #settingsMsg { margin-top:12px; font-size:14px; padding:10px; border-radius:8px; display:none; }
   .ok { background:#d6f5df; color:#146c2e; }
   .err { background:#fde2e1; color:#a3231d; }
-    /* 報到彈窗 */
-    #checkinOverlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:200; align-items:center; justify-content:center; padding:16px; }
-    #checkinOverlay.show { display:flex; }
-    #checkinModal { background:#fff; border-radius:16px; padding:28px 24px; max-width:340px; width:100%; text-align:center; box-shadow:0 8px 30px rgba(0,0,0,0.15); }
-    #checkinModal .icon { font-size:48px; margin-bottom:12px; }
-    #checkinModal .modal-msg { font-size:16px; font-weight:600; margin-bottom:20px; line-height:1.5; }
-    #checkinModal button { padding:10px 32px; border:none; border-radius:8px; font-size:15px; cursor:pointer; background:#2563eb; color:#fff; }
+  #resultOverlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:200; align-items:center; justify-content:center; padding:24px; }
+  #resultOverlay.show { display:flex; }
+  #resultModal { background:#fff; border-radius:16px; padding:28px 20px; max-width:320px; width:100%; text-align:center; }
+  #resultModal .icon { font-size:48px; margin-bottom:8px; }
+  #resultModal .text { font-size:18px; font-weight:700; margin-bottom:16px; }
+  #resultModal.success .text { color:#146c2e; }
+  #resultModal.duplicate .text { color:#8a6300; }
+  #resultModal.error .text { color:#a3231d; }
+  #resultModal button { width:100%; margin-top:0; padding:10px; border:none; border-radius:8px; background:#2563eb; color:#fff; font-size:15px; cursor:pointer; }
 </style>
 </head>
 <body>
@@ -64,10 +66,16 @@
     <div id="result"></div>
     <div id="log"></div>
     <div style="display:flex;gap:8px;margin-top:16px;">
-      <a id="backLink" href="#" target="_blank" style="flex:1;box-sizing:border-box;display:flex;align-items:center;justify-content:center;padding:12px;font-size:14px;color:#666;text-decoration:none;border:1px solid #ddd;border-radius:8px;white-space:nowrap;">← 返回上一頁</a>
+      <a id="backLink" href="#" onclick="goBack(event)" style="flex:1;box-sizing:border-box;display:flex;align-items:center;justify-content:center;padding:12px;font-size:14px;color:#666;text-decoration:none;border:1px solid #ddd;border-radius:8px;white-space:nowrap;">← 返回上一頁</a>
       <button class="secondary" onclick="logoutStaff()" style="flex:1;margin-top:0;white-space:nowrap;">登出</button>
     </div>
   </div>
+
+  <div id="resultOverlay"><div id="resultModal">
+    <div class="icon" id="resultModalIcon"></div>
+    <div class="text" id="resultModalText"></div>
+    <button onclick="closeResultModal()">繼續掃描</button>
+  </div></div>
 
   <script>
     var API_URL = '';
@@ -115,6 +123,11 @@
       document.getElementById('mainUI').style.display = 'block';
       document.getElementById('backLink').href = API_URL;
       startCamera();
+    }
+
+    function goBack(e) {
+      if (e) e.preventDefault();
+      if (API_URL) { location.href = API_URL + '?page=login'; }
     }
 
     function doStaffLogin() {
@@ -198,14 +211,21 @@
       log.insertBefore(line, log.firstChild);
     }
 
-    function showCheckinPopup(type, message) {
-      var icon = type === 'success' ? '✅' : type === 'duplicate' ? '⚠️' : '❌';
-      document.getElementById('checkinIcon').textContent = icon;
-      document.getElementById('checkinMsg').textContent = message;
-      document.getElementById('checkinOverlay').className = 'show';
+    var resultModalTimer = null;
+
+    function showResultModal(cls, icon, text) {
+      var modal = document.getElementById('resultModal');
+      modal.className = cls;
+      document.getElementById('resultModalIcon').textContent = icon;
+      document.getElementById('resultModalText').textContent = text;
+      document.getElementById('resultOverlay').className = 'show';
+      if (resultModalTimer) clearTimeout(resultModalTimer);
+      resultModalTimer = setTimeout(closeResultModal, 2500);
     }
-    function closeCheckinModal() {
-      document.getElementById('checkinOverlay').className = '';
+
+    function closeResultModal() {
+      document.getElementById('resultOverlay').className = '';
+      if (resultModalTimer) { clearTimeout(resultModalTimer); resultModalTimer = null; }
     }
 
     function handleDecoded(decodedText) {
@@ -215,14 +235,26 @@
       lastTime = now;
 
       jsonpCheckin(decodedText, function (err, res) {
-        if (err) { showResult('error', '連線失敗，請確認網路連線。'); addLog('連線失敗'); return; }
+        if (err) {
+          showResult('error', '連線失敗，請確認網路連線。');
+          showResultModal('error', '❌', '連線失敗，請確認網路連線。');
+          addLog('連線失敗');
+          return;
+        }
         if (res.status === 'error' && res.message && res.message.indexOf('重新登入') > -1) {
           logoutStaff();
           return;
         }
-        if (res.status === 'success') { showResult('success', '✅ ' + res.message); showCheckinPopup('success', res.message); }
-        else if (res.status === 'duplicate') { showResult('duplicate', '⚠️ ' + res.message); showCheckinPopup('duplicate', res.message); }
-        else { showResult('error', '❌ ' + res.message); showCheckinPopup('error', res.message); }
+        if (res.status === 'success') {
+          showResult('success', '✅ ' + res.message);
+          showResultModal('success', '✅', res.message);
+        } else if (res.status === 'duplicate') {
+          showResult('duplicate', '⚠️ ' + res.message);
+          showResultModal('duplicate', '⚠️', res.message);
+        } else {
+          showResult('error', '❌ ' + res.message);
+          showResultModal('error', '❌', res.message);
+        }
         addLog(res.message);
       });
     }
@@ -262,6 +294,5 @@
 
     loadSettings();
   </script>
-  <div id="checkinOverlay" onclick="closeCheckinModal()"><div id="checkinModal" onclick="event.stopPropagation()"><div class="icon" id="checkinIcon"></div><div class="modal-msg" id="checkinMsg"></div><button onclick="closeCheckinModal()">確認</button></div></div>
 </body>
 </html>
