@@ -36,6 +36,21 @@
   #resultModal.duplicate .text { color:#8a6300; }
   #resultModal.error .text { color:#a3231d; }
   #resultModal button { width:100%; margin-top:0; padding:10px; border:none; border-radius:8px; background:#2563eb; color:#fff; font-size:15px; cursor:pointer; }
+  #confirmOverlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:210; align-items:center; justify-content:center; padding:24px; }
+  #confirmOverlay.show { display:flex; }
+  #confirmModal { background:#fff; border-radius:16px; padding:24px 20px; max-width:340px; width:100%; text-align:center; }
+  #confirmModal .cname { font-size:20px; font-weight:700; margin-bottom:4px; }
+  #confirmModal .creg { font-size:13px; color:#888; margin-bottom:16px; }
+  #confirmModal .clabel { font-size:14px; color:#333; margin-bottom:8px; }
+  #confirmModal .stepper { display:flex; align-items:stretch; gap:8px; margin-bottom:18px; }
+  #confirmModal .stepper button { width:56px; margin:0; padding:0; font-size:26px; line-height:1; background:#eef2ff; color:#2563eb; border:1px solid #c7d2fe; border-radius:10px; cursor:pointer; flex-shrink:0; }
+  #confirmModal .stepper button:disabled { background:#f3f4f6; color:#c4c4c4; border-color:#e5e7eb; cursor:not-allowed; }
+  #confirmModal .stepper input { flex:1; width:auto; min-width:0; text-align:center; font-size:26px; font-weight:700; padding:8px; border:1px solid #ddd; border-radius:10px; box-sizing:border-box; }
+  #confirmModal .cbtns { display:flex; gap:10px; }
+  #confirmModal .cbtns button { flex:1; margin:0; padding:12px; border:none; border-radius:10px; font-size:16px; cursor:pointer; }
+  #confirmModal .cbtns .ok { background:#16a34a; color:#fff; }
+  #confirmModal .cbtns .cancel { background:#e5e7eb; color:#333; }
+  #confirmModal .cbtns button:disabled { opacity:.6; cursor:not-allowed; }
 </style>
 </head>
 <body>
@@ -75,6 +90,21 @@
     <div class="icon" id="resultModalIcon"></div>
     <div class="text" id="resultModalText"></div>
     <button onclick="closeResultModal()">繼續掃描</button>
+  </div></div>
+
+  <div id="confirmOverlay"><div id="confirmModal">
+    <div class="cname" id="confirmName"></div>
+    <div class="creg" id="confirmReg"></div>
+    <div class="clabel">實際報到人數</div>
+    <div class="stepper">
+      <button type="button" id="hcMinus">－</button>
+      <input type="text" id="hcInput" inputmode="numeric" pattern="[0-9]*">
+      <button type="button" id="hcPlus">＋</button>
+    </div>
+    <div class="cbtns">
+      <button type="button" class="cancel" onclick="cancelConfirm()">取消</button>
+      <button type="button" class="ok" id="confirmOkBtn" onclick="confirmCheckin()">確認報到</button>
+    </div>
   </div></div>
 
   <script>
@@ -179,7 +209,8 @@
       document.body.appendChild(script);
     }
 
-    function jsonpCheckin(id, onDone) {
+    // action：'lookup'（只查詢，不寫入）或 'checkin'（確認人數後正式報到）
+    function jsonpCheckin(action, id, headcount, onDone) {
       var callbackName = 'jsonp_cb_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
       var script = document.createElement('script');
       window[callbackName] = function (res) {
@@ -187,7 +218,8 @@
         if (script.parentNode) script.parentNode.removeChild(script);
         onDone(null, res);
       };
-      script.src = API_URL + '?action=checkin&id=' + encodeURIComponent(id) +
+      script.src = API_URL + '?action=' + action + '&id=' + encodeURIComponent(id) +
+        (headcount !== null && headcount !== undefined ? '&headcount=' + encodeURIComponent(headcount) : '') +
         '&token=' + encodeURIComponent(TOKEN) + '&callback=' + callbackName;
       script.onerror = function () {
         delete window[callbackName];
@@ -228,13 +260,69 @@
       if (resultModalTimer) { clearTimeout(resultModalTimer); resultModalTimer = null; }
     }
 
-    function handleDecoded(decodedText) {
-      var now = Date.now();
-      if (decodedText === lastId && now - lastTime < 4000) return;
-      lastId = decodedText;
-      lastTime = now;
+    var HC_MIN = 0, HC_MAX = 99;
+    var pendingId = null;     // 正在確認人數的 QR（確認視窗開著時，不處理新的掃描）
+    var hcDefault = 1;
 
-      jsonpCheckin(decodedText, function (err, res) {
+    function clampHc() {
+      var input = document.getElementById('hcInput');
+      var n = parseInt(String(input.value).replace(/[^0-9]/g, ''), 10);
+      if (isNaN(n)) n = hcDefault;
+      n = Math.max(HC_MIN, Math.min(HC_MAX, n));
+      input.value = n;
+      document.getElementById('hcMinus').disabled = n <= HC_MIN;
+      document.getElementById('hcPlus').disabled = n >= HC_MAX;
+    }
+    document.getElementById('hcMinus').onclick = function () { clampHc(); var i = document.getElementById('hcInput'); i.value = Math.max(HC_MIN, parseInt(i.value, 10) - 1); clampHc(); };
+    document.getElementById('hcPlus').onclick = function () { clampHc(); var i = document.getElementById('hcInput'); i.value = Math.min(HC_MAX, parseInt(i.value, 10) + 1); clampHc(); };
+    document.getElementById('hcInput').oninput = function () { this.value = this.value.replace(/[^0-9]/g, ''); };
+    document.getElementById('hcInput').onblur = clampHc;
+    document.getElementById('hcInput').onfocus = function () { this.select(); };
+
+    function openConfirm(res, id) {
+      pendingId = id;
+      hcDefault = res.registeredHeadcount || 1;
+      document.getElementById('confirmName').textContent = res.name;
+      document.getElementById('confirmReg').textContent = res.hasHeadcountField ? ('報名人數：' + res.registeredHeadcount + ' 人') : '請確認現場實際人數';
+      document.getElementById('hcInput').value = hcDefault;
+      clampHc();
+      document.getElementById('confirmOkBtn').disabled = false;
+      document.getElementById('confirmOverlay').className = 'show';
+    }
+
+    function closeConfirm() {
+      document.getElementById('confirmOverlay').className = '';
+      pendingId = null;
+    }
+
+    function cancelConfirm() {
+      closeConfirm();
+      lastId = null; // 取消後可立刻重新掃描同一組 QR
+      addLog('已取消報到');
+    }
+
+    function showFinalResult(res) {
+      if (res.status === 'success') {
+        showResult('success', '✅ ' + res.message);
+        showResultModal('success', '✅', res.message);
+      } else if (res.status === 'duplicate') {
+        showResult('duplicate', '⚠️ ' + res.message);
+        showResultModal('duplicate', '⚠️', res.message);
+      } else {
+        showResult('error', '❌ ' + res.message);
+        showResultModal('error', '❌', res.message);
+      }
+      addLog(res.message);
+    }
+
+    function confirmCheckin() {
+      clampHc();
+      var id = pendingId;
+      if (!id) return;
+      var headcount = document.getElementById('hcInput').value;
+      document.getElementById('confirmOkBtn').disabled = true;
+      jsonpCheckin('checkin', id, headcount, function (err, res) {
+        closeConfirm();
         if (err) {
           showResult('error', '連線失敗，請確認網路連線。');
           showResultModal('error', '❌', '連線失敗，請確認網路連線。');
@@ -245,17 +333,33 @@
           logoutStaff();
           return;
         }
-        if (res.status === 'success') {
-          showResult('success', '✅ ' + res.message);
-          showResultModal('success', '✅', res.message);
-        } else if (res.status === 'duplicate') {
-          showResult('duplicate', '⚠️ ' + res.message);
-          showResultModal('duplicate', '⚠️', res.message);
-        } else {
-          showResult('error', '❌ ' + res.message);
-          showResultModal('error', '❌', res.message);
+        showFinalResult(res);
+      });
+    }
+
+    function handleDecoded(decodedText) {
+      if (pendingId) return; // 確認視窗開著時不處理新的掃描
+      var now = Date.now();
+      if (decodedText === lastId && now - lastTime < 4000) return;
+      lastId = decodedText;
+      lastTime = now;
+
+      jsonpCheckin('lookup', decodedText, null, function (err, res) {
+        if (err) {
+          showResult('error', '連線失敗，請確認網路連線。');
+          showResultModal('error', '❌', '連線失敗，請確認網路連線。');
+          addLog('連線失敗');
+          return;
         }
-        addLog(res.message);
+        if (res.status === 'error' && res.message && res.message.indexOf('重新登入') > -1) {
+          logoutStaff();
+          return;
+        }
+        if (res.status === 'ready') {
+          openConfirm(res, decodedText);
+        } else {
+          showFinalResult(res);
+        }
       });
     }
 
