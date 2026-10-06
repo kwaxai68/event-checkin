@@ -95,7 +95,7 @@
   <div id="confirmOverlay"><div id="confirmModal">
     <div class="cname" id="confirmName"></div>
     <div class="creg" id="confirmReg"></div>
-    <div class="clabel">實際報到人數</div>
+    <div class="clabel" id="confirmLabel">實際報到人數</div>
     <div class="stepper">
       <button type="button" id="hcMinus">－</button>
       <input type="text" id="hcInput" inputmode="numeric" pattern="[0-9]*">
@@ -219,7 +219,7 @@
         onDone(null, res);
       };
       script.src = API_URL + '?action=' + action + '&id=' + encodeURIComponent(id) +
-        (headcount !== null && headcount !== undefined ? '&headcount=' + encodeURIComponent(headcount) : '') +
+        (headcount !== null && headcount !== undefined ? '&' + (action === 'addcount' ? 'addcount' : 'headcount') + '=' + encodeURIComponent(headcount) : '') +
         '&token=' + encodeURIComponent(TOKEN) + '&callback=' + callbackName;
       script.onerror = function () {
         delete window[callbackName];
@@ -263,6 +263,7 @@
     var HC_MIN = 0, HC_MAX = 99;
     var pendingId = null;     // 正在確認人數的 QR（確認視窗開著時，不處理新的掃描）
     var hcDefault = 1;
+    var pendingMode = 'checkin'; // checkin：首次報到；add：補報到（本次新增人數）
 
     function clampHc() {
       var input = document.getElementById('hcInput');
@@ -281,9 +282,19 @@
 
     function openConfirm(res, id) {
       pendingId = id;
-      hcDefault = res.registeredHeadcount || 1;
+      pendingMode = res.status === 'add_more' ? 'add' : 'checkin';
+      if (pendingMode === 'add') {
+        hcDefault = Math.max(0, (res.registeredHeadcount || 0) - (res.currentHeadcount || 0));
+        document.getElementById('confirmLabel').textContent = '本次新增到場人數';
+        document.getElementById('confirmReg').textContent = (res.hasHeadcountField ? '報名 ' + res.registeredHeadcount + ' 人，' : '') + '已報到 ' + res.currentHeadcount + ' 人';
+        document.getElementById('confirmOkBtn').textContent = '確認補報到';
+      } else {
+        hcDefault = res.registeredHeadcount || 1;
+        document.getElementById('confirmLabel').textContent = '實際報到人數';
+        document.getElementById('confirmReg').textContent = res.hasHeadcountField ? ('報名人數：' + res.registeredHeadcount + ' 人') : '請確認現場實際人數';
+        document.getElementById('confirmOkBtn').textContent = '確認報到';
+      }
       document.getElementById('confirmName').textContent = res.name;
-      document.getElementById('confirmReg').textContent = res.hasHeadcountField ? ('報名人數：' + res.registeredHeadcount + ' 人') : '請確認現場實際人數';
       document.getElementById('hcInput').value = hcDefault;
       clampHc();
       document.getElementById('confirmOkBtn').disabled = false;
@@ -305,7 +316,7 @@
       if (res.status === 'success') {
         showResult('success', '✅ ' + res.message);
         showResultModal('success', '✅', res.message);
-      } else if (res.status === 'duplicate') {
+      } else if (res.status === 'duplicate' || res.status === 'not_attending') {
         showResult('duplicate', '⚠️ ' + res.message);
         showResultModal('duplicate', '⚠️', res.message);
       } else {
@@ -321,7 +332,7 @@
       if (!id) return;
       var headcount = document.getElementById('hcInput').value;
       document.getElementById('confirmOkBtn').disabled = true;
-      jsonpCheckin('checkin', id, headcount, function (err, res) {
+      jsonpCheckin(pendingMode === 'add' ? 'addcount' : 'checkin', id, headcount, function (err, res) {
         closeConfirm();
         if (err) {
           showResult('error', '連線失敗，請確認網路連線。');
@@ -355,7 +366,7 @@
           logoutStaff();
           return;
         }
-        if (res.status === 'ready') {
+        if (res.status === 'ready' || res.status === 'add_more') {
           openConfirm(res, decodedText);
         } else {
           showFinalResult(res);
