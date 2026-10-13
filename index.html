@@ -12,6 +12,7 @@
   input { width:100%; padding:10px 12px; border:1px solid #ddd; border-radius:8px; font-size:15px; box-sizing:border-box; }
   button { width:100%; margin-top:16px; padding:12px; border:none; border-radius:8px; background:#2563eb; color:#fff; font-size:16px; cursor:pointer; box-sizing:border-box; }
   button.secondary { background:#e5e7eb; color:#333; }
+  #phoneMode input { width:100%; padding:14px; font-size:20px; letter-spacing:2px; text-align:center; border:1px solid #ddd; border-radius:10px; box-sizing:border-box; }
   .mode-tabs { display:flex; gap:8px; margin-bottom:12px; }
   .mode-tabs .tab { flex:1; width:auto; margin-top:0; padding:10px 4px; border:1px solid #ddd; background:#fff; color:#333; border-radius:8px; font-size:12px; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; box-sizing:border-box; }
   .mode-tabs .tab.active { background:#2563eb; color:#fff; border-color:#2563eb; }
@@ -72,11 +73,16 @@
     <div class="mode-tabs">
       <button id="tabCamera" class="tab active" onclick="switchMode('camera')">即時相機掃描</button>
       <button id="tabPhoto" class="tab" onclick="switchMode('photo')">拍照掃描</button>
+      <button id="tabPhone" class="tab" onclick="switchMode('phone')">手機號碼</button>
     </div>
     <div id="cameraMode"><div id="reader"></div></div>
     <div id="photoMode" style="display:none;">
       <input type="file" id="fileInput" accept="image/*" capture="environment">
       <p class="hint">點擊後會開啟手機相機拍照，拍下 QR Code 後自動判讀報到。</p>
+    </div>
+    <div id="phoneMode" style="display:none;">
+      <input type="tel" id="phoneInput" inputmode="numeric" maxlength="10" placeholder="09XXXXXXXX" autocomplete="off">
+      <button type="button" id="phoneBtn" onclick="handlePhoneLookup()" style="width:100%;margin-top:10px;padding:12px;border:none;border-radius:8px;background:#2563eb;color:#fff;font-size:16px;cursor:pointer;">查詢並報到</button>
     </div>
     <div id="result"></div>
     <div id="log"></div>
@@ -218,7 +224,8 @@
         if (script.parentNode) script.parentNode.removeChild(script);
         onDone(null, res);
       };
-      script.src = API_URL + '?action=' + action + '&id=' + encodeURIComponent(id) +
+      script.src = API_URL + '?action=' + action + '&' + (action === 'lookupphone' ? 'phone' : 'id') + '=' + encodeURIComponent(id) +
+        ((action === 'checkin' || action === 'addcount') && pendingVia ? '&via=' + pendingVia : '') +
         (headcount !== null && headcount !== undefined ? '&' + (action === 'addcount' ? 'addcount' : 'headcount') + '=' + encodeURIComponent(headcount) : '') +
         '&token=' + encodeURIComponent(TOKEN) + '&callback=' + callbackName;
       script.onerror = function () {
@@ -263,6 +270,7 @@
     var HC_MIN = 0, HC_MAX = 99;
     var pendingId = null;     // 正在確認人數的 QR（確認視窗開著時，不處理新的掃描）
     var hcDefault = 1;
+    var pendingVia = ''; // 'phone'：由手機號碼查詢進來的報到
     var pendingMode = 'checkin'; // checkin：首次報到；add：補報到（本次新增人數）
 
     function clampHc() {
@@ -304,6 +312,7 @@
     function closeConfirm() {
       document.getElementById('confirmOverlay').className = '';
       pendingId = null;
+      pendingVia = '';
     }
 
     function cancelConfirm() {
@@ -347,6 +356,34 @@
         showFinalResult(res);
       });
     }
+
+
+    function handlePhoneLookup() {
+      if (pendingId) return;
+      var phone = document.getElementById('phoneInput').value.trim();
+      if (!/^09[0-9]{8}$/.test(phone)) { showResult('error', '請輸入 09 開頭、共 10 碼的手機號碼。'); return; }
+      var btn = document.getElementById('phoneBtn');
+      btn.disabled = true;
+      jsonpCheckin('lookupphone', phone, null, function (err, res) {
+        btn.disabled = false;
+        if (err) {
+          showResult('error', '連線失敗，請確認網路連線。');
+          showResultModal('error', '❌', '連線失敗，請確認網路連線。');
+          addLog('連線失敗');
+          return;
+        }
+        if (res.status === 'error' && res.message && res.message.indexOf('重新登入') > -1) { logoutStaff(); return; }
+        if (res.status === 'ready' || res.status === 'add_more') {
+          pendingVia = 'phone';
+          openConfirm(res, res.id);
+        } else {
+          showFinalResult(res);
+        }
+      });
+    }
+
+    document.getElementById('phoneInput').oninput = function () { this.value = this.value.replace(/[^0-9]/g, ''); };
+    document.getElementById('phoneInput').onkeydown = function (e) { if (e.key === 'Enter') handlePhoneLookup(); };
 
     function handleDecoded(decodedText) {
       if (pendingId) return; // 確認視窗開著時不處理新的掃描
@@ -392,10 +429,13 @@
     function switchMode(mode) {
       document.getElementById('tabCamera').className = 'tab' + (mode === 'camera' ? ' active' : '');
       document.getElementById('tabPhoto').className = 'tab' + (mode === 'photo' ? ' active' : '');
+      document.getElementById('tabPhone').className = 'tab' + (mode === 'phone' ? ' active' : '');
+      document.getElementById('phoneMode').style.display = mode === 'phone' ? 'block' : 'none';
       document.getElementById('cameraMode').style.display = mode === 'camera' ? 'block' : 'none';
       document.getElementById('photoMode').style.display = mode === 'photo' ? 'block' : 'none';
       document.getElementById('result').style.display = 'none';
       if (mode === 'camera') { startCamera(); } else { stopCamera(); }
+      if (mode === 'phone') document.getElementById('phoneInput').focus();
     }
 
     document.getElementById('fileInput').addEventListener('change', function (e) {
