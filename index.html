@@ -41,6 +41,7 @@
   #confirmOverlay.show { display:flex; }
   #confirmModal { background:#fff; border-radius:16px; padding:24px 20px; max-width:340px; width:100%; text-align:center; }
   #confirmModal .cname { font-size:20px; font-weight:700; margin-bottom:4px; }
+  #confirmModal .cinv { display:none; font-size:14px; font-weight:600; color:#2563eb; background:#eef2ff; border-radius:8px; padding:4px 10px; margin:2px auto 8px; width:fit-content; }
   #confirmModal .creg { font-size:13px; color:#888; margin-bottom:16px; }
   #confirmModal .clabel { font-size:14px; color:#333; margin-bottom:8px; }
   #confirmModal .stepper { display:flex; align-items:stretch; gap:8px; margin-bottom:18px; }
@@ -100,6 +101,7 @@
 
   <div id="confirmOverlay"><div id="confirmModal">
     <div class="cname" id="confirmName"></div>
+    <div class="cinv" id="confirmInviter"></div>
     <div class="creg" id="confirmReg"></div>
     <div class="clabel" id="confirmLabel">實際報到人數</div>
     <div class="stepper">
@@ -303,6 +305,9 @@
         document.getElementById('confirmOkBtn').textContent = '確認報到';
       }
       document.getElementById('confirmName').textContent = res.name;
+      var invEl = document.getElementById('confirmInviter');
+      invEl.textContent = res.inviter ? ('邀請人：' + res.inviter) : '';
+      invEl.style.display = res.inviter ? 'block' : 'none';
       document.getElementById('hcInput').value = hcDefault;
       clampHc();
       document.getElementById('confirmOkBtn').disabled = false;
